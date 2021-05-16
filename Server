@@ -1,0 +1,87 @@
+package advisor;
+
+
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import com.sun.net.httpserver.HttpServer;
+
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.util.concurrent.CountDownLatch;
+
+public class Server {
+    private static final String GRANT_TYPE = "authorization_code";
+    private static final String REDIRECT_URI = "http://localhost:8080";
+    private static final String CLIENT_ID = "5794bb95a70d461899b3b58554415b9b";
+    private static final String CLIENT_SECRET = "a15146092e8b46f1ad9bbaf5a9e08663";
+    private static final String RESPONSE_TYPE = "code";
+    private static HttpClient client = HttpClient.newBuilder().build();
+    public static String accessToken;
+    private static String authCode;
+        //creating new server
+        public static boolean authorize() throws IOException, InterruptedException {
+            System.out.println("use this link to request the access code:");
+            System.out.println("https://accounts.spotify.com/authorize"
+                    + "?client_id=" + CLIENT_ID
+                    + "&redirect_uri=" + REDIRECT_URI
+                    + "&response_type=" + RESPONSE_TYPE);
+            System.out.println("waiting for code...");
+            requestAccessCode();
+            if (authCode == null) {
+                return false;
+            }
+            System.out.println("code received");
+            System.out.println("making http request for access_token...");
+            HttpResponse<String> response = requestAccessToken();
+            JsonObject json = JsonParser.parseString(response.body()).getAsJsonObject();
+            accessToken = json.get("access_token").getAsString();
+            System.out.println(accessToken);
+            return response.statusCode() == 200;
+        }
+        private static void requestAccessCode() throws IOException, InterruptedException{
+            CountDownLatch latch = new CountDownLatch(1);
+            HttpServer server = HttpServer.create(new InetSocketAddress(8080), 0);
+            server.createContext("/",
+                HttpExchange -> {
+                    String query = HttpExchange.getRequestURI().getQuery();
+                    String message;
+                    if (query.contains("code")) {
+                        authCode = (query.substring(5));
+                        latch.countDown();
+                        message = "Got the code. Return back to your program.";
+
+                    } else
+                        message = "Authorization code not found. Try again.";
+
+                    HttpExchange.sendResponseHeaders(200, message.length());
+                    HttpExchange.getResponseBody().write(message.getBytes());
+                    HttpExchange.getResponseBody().close();
+                }
+        );
+            server.start();
+            latch.await();
+            //Stopping the server
+            server.stop(1);
+    }
+    private static HttpResponse<String> requestAccessToken() throws IOException, InterruptedException{
+        HttpRequest request;
+        request = HttpRequest.newBuilder()
+                .POST(HttpRequest.BodyPublishers.ofString(
+                        "grant_type=" + GRANT_TYPE
+                                + "&code=" + authCode
+                                + "&redirect_uri=" + REDIRECT_URI
+                                + "&client_id=" + CLIENT_ID
+                                + "&client_secret=" + CLIENT_SECRET))
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .uri(URI.create("https://accounts.spotify.com/api/token"))
+                .build();
+        //Getting response
+        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        return response;
+    }
+}
+
